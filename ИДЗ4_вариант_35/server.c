@@ -45,6 +45,8 @@ int battle(int a, int b) {
             return 2;
         return 0;
     }
+
+    return 0;
 }
 
 sig_atomic_t killed = 0;
@@ -101,7 +103,7 @@ int main(int argc, char** argv) {
         int port = PORT;
 
         if (argc == 4) {
-            port = argv[2];
+            port = atoi(argv[2]);
         }
 
         printf("Server binded to port %d successfully.\n", port);

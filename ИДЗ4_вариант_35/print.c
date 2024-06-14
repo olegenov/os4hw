@@ -33,10 +33,11 @@ int main(int argc, char** argv) {
     socklen_t addrlen = sizeof(addr);
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PORT);
+
     if (argc == 2) {
-        addr.sin_addr.s_addr = inet_addr(argv[0]);
+        addr.sin_addr.s_addr = inet_addr(argv[1]);
         int port;
-        sscanf(argv[1], "%d", &port);
+        sscanf(argv[2], "%d", &port);
         addr.sin_port = htons(port);
     }
 
