@@ -92,15 +92,52 @@ bash ./compile.sh
 ![alt text](./images/client3.png "Client")
 
 ### Работа на оценку 6-7
+### Компиляция
+```
+gcc player.c -o player
+gcc server.c -o server
+gcc print.c -o print
+```
+или
+```
+bash ./compile.sh
+```
+### Запуск
+```
+./server <N>
+./player 
+./player
+...
+./print
+```
+или
+```
+./server <IP> <PORT> <N>
+./player <IP> <PORT>
+./player <IP> <PORT>
+...
+./print <IP> <PORT>
+```
 
+### Исходные сущности и их поведение
+* **Клиент-зритель:**
+    * Создает сокет и подключается к серверу.
+    * Получает информацию о ходе игры и выводит ее на экран.
+
+### Модификации
 * **Клиент-зритель:**
 Был добавлен клиент-зритель, который подключается к серверу, получает информацию о ходе турнира и выводит ее на экран.
-
 
 * **Сервер:**
 Добавлена отправка сообщений о результатах каждого боя и состоянии турнира.
 
-* **Клиент-зритель:**
+#### Результаты работы программы
+![alt text](./images/print.png "Print")
 
-    * Создает сокет и подключается к серверу.
-    * Получает информацию о ходе игры и выводит ее на экран.
+![alt text](./images/serverTest2.png "Server")
+
+![alt text](./images/client1Test2.png "Client")
+
+![alt text](./images/client2Test2.png "Client")
+
+![alt text](./images/client3Test2.png "Client")

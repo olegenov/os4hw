@@ -50,8 +50,11 @@ int battle(int a, int b) {
 }
 
 sig_atomic_t killed = 0;
+int master_socket;
+
 void killing_handler(int sig) {
     killed = 1;
+    close(master_socket);
 }
 
 void terminate_players(int sig) {
@@ -61,9 +64,7 @@ void terminate_players(int sig) {
 int main(int argc, char** argv) {
     srand(time(NULL));
 
-    char buf[BUFFER_SIZE];
     signal(SIGINT, killing_handler);
-    signal(SIGINT, terminate_players);
 
     if (argc != 2 && argc != 4) {
         perror("incorrect argument count! it must be 1 (<N>) or 3 (<ip> <port> <N>)");
@@ -73,8 +74,7 @@ int main(int argc, char** argv) {
     int N;
     sscanf(argv[argc - 1], "%d", &N);
 
-    int master_socket = socket(AF_INET, SOCK_DGRAM, 0);
-
+    master_socket = socket(AF_INET, SOCK_DGRAM, 0);
     if (master_socket == -1) {
         perror("socket failed");
         exit(EXIT_FAILURE);
@@ -95,121 +95,106 @@ int main(int argc, char** argv) {
     }
 
     int bind_res = bind(master_socket, (struct sockaddr *) & addr, addrlen);
-
     if (bind_res == -1) {
         perror("bind failed");
         exit(EXIT_FAILURE);
     } else {
-        int port = PORT;
-
-        if (argc == 4) {
-            port = atoi(argv[2]);
-        }
-
+        int port = (argc == 4) ? atoi(argv[2]) : PORT;
         printf("Server binded to port %d successfully.\n", port);
     }
 
-    struct sockaddr_in client_addr[N + 1];
+    struct sockaddr_in client_addr[N+1];
     socklen_t client_len;
 
-    printf("Waiting for viewer and players to connect\n");
-    printf("First, connect all players, then the viewer\n");
+    printf("Waiting for players to connect\n");
+    char buf[BUFFER_SIZE];
 
-    for (int i = 0; i < N + 1; ++i) {
+    for (int i = 0; i < N; ++i) {
         memset(&client_addr[i], 0, sizeof(client_addr[i]));
-        // Request to connect
         client_len = sizeof(client_addr[i]);
         recvfrom(master_socket, buf, BUFFER_SIZE, MSG_WAITALL, (struct sockaddr *) &client_addr[i], &client_len);
-
-        if (i == N) {
-            printf("Viewer connected\n");
-        } else {
-            printf("Player %d connected\n", i);
-        }
+        int id;
+        sscanf(buf, "%d", &id);
+        printf("Player %d connected\n", i);
     }
 
-    int *tournament;
-    tournament = (int*) mmap(NULL, N * N * sizeof(int),
-                             PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED,
-                             -1, 0);
+    printf("Waiting for viewer to connect\n");
+    recvfrom(master_socket, buf, BUFFER_SIZE, MSG_WAITALL, (struct sockaddr *) &client_addr[N], &client_len);
+    int viewer;
+    sscanf(buf, "%d", &viewer);
+    printf("Viewer connected\n");
+
+    int *tournament = mmap(NULL, N * N * sizeof(int),
+                           PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_SHARED, -1, 0);
+    if (tournament == MAP_FAILED) {
+        perror("mmap failed");
+        exit(EXIT_FAILURE);
+    }
+
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j < N; ++j) {
             tournament[i * N + j] = -1;
         }
     }
 
-    sprintf(buf, "Tournament begins!\n");
-    sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[N]), client_len);
-
     for (int i = 0; i < N; ++i) {
-        // Sends N and id after everyone connected
         sprintf(buf, "%d %d", N, i);
-        sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[i]), client_len);
+        sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (struct sockaddr*)&client_addr[i], client_len);
     }
 
     int rounds = 0;
     for (int i = 0; i < N; ++i) {
-        if (fork() != 0) {
-            continue;
-        }
+        if (fork() == 0) {
+            srand(time(NULL) ^ getpid());
 
-        srand(time(NULL) ^ getpid());
+            while (!killed && rounds < N * (N - 1) / 2) {
+                int j;
+                recvfrom(master_socket, buf, BUFFER_SIZE, MSG_WAITALL, (struct sockaddr*)&client_addr[i], &client_len);
+                sscanf(buf, "%d", &j);
 
-        while (!killed && rounds < N * (N - 1) / 2) {
-            // Receiving a battle request
-            int j;
+                if (tournament[i * N + j] != -1 || i == j) continue;
 
-            recvfrom(master_socket, buf, BUFFER_SIZE, MSG_WAITALL, (struct sockaddr *) &client_addr[i], &client_len);
-            sscanf(buf, "%d", &j);
+                int i_result = rand() % 3;
+                int j_result = rand() % 3;
 
-            if (tournament[i * N + j] != -1 || i == j) {
-                continue;
-            }
+                int result = battle(i_result, j_result);
+                tournament[i * N + j] = result;
+                tournament[j * N + i] = 2 - result;
 
-            // Sending to viewer
-            sprintf(buf, "Player #%i plays with player #%i", i + 1, j + 1);
-            printf("Player #%i plays with player #%i", i + 1, j + 1);
-            sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[N]), client_len);
+                sprintf(buf, "Player %d (%s) vs Player %d (%s) => Result: %s",
+                        i + 1, sign_str[i_result], j + 1, sign_str[j_result],
+                        result == 0 ? "Player 1 wins\n" : (result == 2 ? "Player 2 wins\n" : "Draw\n"));
 
-            int r = rand();
+                sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (struct sockaddr*)&client_addr[i], client_len);
+                sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (struct sockaddr*)&client_addr[j], client_len);
+                sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[N]), client_len);
 
-            int i_result = rand() % 3;
-            int j_result = rand() % 3;
-
-            int result = battle(i_result, j_result);
-            tournament[i * N + j] = result;
-            tournament[j * N + i] = 2 - result;
-
-            // Sending to viewer
-            sprintf(buf, "Player #%i: %s. Player #%i: %s.    %i:%i",
-                    i + 1, sign_str[result], j + 1, sign_str[2 - result], result, 2 - result);
-            sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[N]), client_len);
-
-            // Sending table to viewer
-            strncpy (buf, "Tournament: \n", BUFFER_SIZE);
-            char num[126];
-            for (int i = 0; i < N; ++i) {
-                for (int j = 0; j < N; ++j) {
-                    sprintf(num, "%d ", tournament[i * N + j]);
-                    strncat (buf, num, BUFFER_SIZE);
+                // Sending table to viewer
+                strncpy(buf, "Tournament: \n", BUFFER_SIZE);
+                char num[126];
+                for (int i = 0; i < N; ++i) {
+                    for (int j = 0; j < N; ++j) {
+                        sprintf(num, "%d\t", tournament[i * N + j]);
+                        strncat(buf, num, BUFFER_SIZE);
+                    }
+                    sprintf(num, "\n");
+                    strcat(buf, num);
                 }
-                sprintf(num, "\n");
-                strcat(buf, num);
+                sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[N]), client_len);
+
+                printf("Player id %d played with id %d: winner: %s", i+1, j+1, result == 0 ? "Player 1 wins\n" : (result == 2 ? "Player 2 wins\n" : "Draw\n"));
+
+                rounds++;
             }
-            sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[N]), client_len);
-
-            // Sending opponent info
-            sprintf(buf, "%d", j);
-            sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[i]), client_len);
-
-            sprintf(buf, "%d", i);
-            sendto(master_socket, buf, BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr*)&(client_addr[j]), client_len);
-
-            ++rounds;
+            exit(0);
         }
-
-        exit(0);
     }
 
+    for (int i = 0; i < N; ++i) {
+        wait(NULL);
+    }
+
+    munmap(tournament, N * N * sizeof(int));
+    close(master_socket);
     return 0;
 }

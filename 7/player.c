@@ -13,39 +13,42 @@
 #define MSG_CONFIRM 0x800
 
 sig_atomic_t killed = 0;
+int socket_fd;
+
 void killing_handler(int sig) {
     killed = 1;
+    close(socket_fd);
+    exit(0);
 }
 
 int main(int argc, char** argv) {
     signal(SIGINT, killing_handler);
     char buf[BUFFER_SIZE];
 
-    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
         perror("socket failed");
         exit(EXIT_FAILURE);
-    }
-    else {
+    } else {
         printf("Player socket created\n");
     }
 
     struct sockaddr_in addr = { 0 };
-    socklen_t addrlen = sizeof addr;
+    socklen_t addrlen = sizeof(addr);
     addr.sin_family = AF_INET;
     addr.sin_port = htons(PORT);
 
-    if (argc == 2) {
-        addr.sin_addr.s_addr = inet_addr(argv[0]);
+    if (argc == 3) {
+        addr.sin_addr.s_addr = inet_addr(argv[1]);
         int port;
-        sscanf(argv[1], "%d", &port);
+        sscanf(argv[2], "%d", &port);
         addr.sin_port = htons(port);
+    } else {
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
     }
 
-    // Sends connect request
     sendto(socket_fd, "1", BUFFER_SIZE, MSG_CONFIRM, (const struct sockaddr *) &addr, addrlen);
 
-    // Receives N and id from server
     int N;
     int id;
 
@@ -55,41 +58,58 @@ int main(int argc, char** argv) {
 
     int players[N];
     for (int i = 0; i < N; ++i) {
-        players[i] = i == id;
+        players[i] = (i == id);
     }
 
     int rounds = 0;
-    for (int i = 0; i < 2; ++i) {
-        if (fork() != 0) {
-            continue;
-        }
 
+    pid_t sender_pid = fork();
+    if (sender_pid == 0) {
         while (rounds < N - 1) {
             if (killed) {
                 close(socket_fd);
                 exit(0);
             }
 
-            if (i == 0) {
-                // One thread is choosing an opponent and sending battle request
-                for (int i = 0; i < N; ++i) {
-                    if (!players[i]) {
-                        sprintf(buf, "%d", i);
-                        sendto(socket_fd, buf, BUFFER_SIZE, MSG_CONFIRM, (struct sockaddr*)&addr, addrlen);
-                        sleep(3);
-                    }
+            for (int j = 0; j < N; ++j) {
+                if (!players[j] && j != id) {
+                    sprintf(buf, "%d", j);
+                    printf("Sends request to %d\n", j);
+                    sendto(socket_fd, buf, BUFFER_SIZE, MSG_CONFIRM, (struct sockaddr *) &addr, addrlen);
+                    sleep(1);
                 }
-            } else {
-                // Other thread is receiving who player battled with
-                recvfrom(socket_fd, buf, BUFFER_SIZE, MSG_WAITALL, (struct sockaddr *) &addr, &addrlen);
-                sscanf(buf, "%d", &id);
-                players[id] = 1;
-                ++rounds;
             }
+            ++rounds;
         }
-
         exit(0);
     }
+
+    pid_t receiver_pid = fork();
+    if (receiver_pid == 0) {
+        while (rounds < N - 1) {
+            if (killed) {
+                close(socket_fd);
+                exit(0);
+            }
+
+            recvfrom(socket_fd, buf, BUFFER_SIZE, MSG_WAITALL, (struct sockaddr *) &addr, &addrlen);
+            int opponent_id;
+            if (rounds >= N - 1) {
+                exit(0);
+            }
+            sscanf(buf, "%d", &opponent_id);
+            printf("Gets request from %d\n", opponent_id);
+            printf("%s", buf);
+            players[opponent_id] = 1;
+            ++rounds;
+        }
+        exit(0);
+    }
+
+    waitpid(sender_pid, NULL, 0);
+    waitpid(receiver_pid, NULL, 0);
+
+    close(socket_fd);
 
     return 0;
 }

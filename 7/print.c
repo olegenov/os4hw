@@ -12,8 +12,11 @@
 #define MSG_CONFIRM 0x800
 
 sig_atomic_t killed = 0;
+int socket_fd;
+
 void killing_handler(int sig) {
     killed = 1;
+    close(socket_fd);
 }
 
 int main(int argc, char** argv) {
@@ -21,7 +24,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, killing_handler);
     char buf[BUFFER_SIZE];
 
-    int socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (socket_fd == -1) {
         perror("socket failed");
         exit(EXIT_FAILURE);
